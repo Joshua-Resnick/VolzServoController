@@ -37,7 +37,7 @@ python3 volz_servo.py                          # cycle +42.4 <-> -45 deg at 30 d
 python3 volz_servo.py --speed 10 --cycles 3    # 10 deg/s, 3 round trips
 python3 volz_servo.py --dwell 2                # pause 2 s at each end
 python3 volz_servo.py --period 30              # one full cycle every 30 s
-python3 volz_servo.py -l                       # also log per-cycle stats to VolzTest_<date>_<time>.csv
+python3 volz_servo.py -l                       # also log 1 Hz telemetry to VolzTest_<date>_<time>.csv
 python3 volz_servo.py --check                  # comms check only, no motion
 python3 volz_servo.py --port /dev/ttyUSB0 --id 2   # explicit port / servo ID (COM5 on Windows)
 ```
@@ -45,9 +45,11 @@ python3 volz_servo.py --port /dev/ttyUSB0 --id 2   # explicit port / servo ID (C
 Stop any time with Ctrl+C.
 
 The console shows commanded vs. actual position, supply current, and motor
-temperature live. With `-l`, each cycle (one A-B-A round trip including
-dwells) is logged with measured start/end position, commanded positions,
-motor/PCB temperature, and average/peak supply current.
+temperature live. With `-l`, a fresh `VolzTest_<date>_<time>.csv` is created
+for each run (never appended to) with one row per second for the entire run:
+position, current, and motor/PCB temperature, tagged with the cycle number
+and phase (`start`, `dwell_a`, `to_b`, `dwell_b`, `to_a`, `idle`) so
+cycle-level stats can be recovered by grouping rows afterward.
 
 ## Protocol notes
 

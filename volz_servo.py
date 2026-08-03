@@ -149,17 +149,29 @@ def find_port() -> str | None:
 
 
 class Telemetry:
-    """Collects current samples and caches a slow-polled temperature."""
+    """Collects current samples, caches a slow-polled temperature, and
 
-    def __init__(self, servo: VolzServo):
+    optionally writes a 1 Hz position/current/temperature log regardless of
+    whether the servo is being actively moved. Each logged row is tagged with
+    the caller-set `cycle`/`phase` so cycle-level stats can be recovered by
+    grouping the raw rows afterward.
+    """
+
+    def __init__(self, servo: VolzServo, logfile=None):
         self.servo = servo
         self.samples: list[float] = []
         self.motor_temp: int | None = None
         self.pcb_temp: int | None = None
         self._next_temp_poll = 0.0
+        self.logfile = logfile
+        self._next_log_tick = 0.0
+        self.cycle = 0
+        self.phase = "start"
         self.poll_temp()
 
-    def sample(self):
+    def sample(self, position: float | None = None):
+        """Take one current reading. `position`, if known to the caller (e.g.
+        mid-move), is reused for the 1 Hz log instead of an extra read."""
         amps = self.servo.read_current()
         if amps is not None:
             self.samples.append(amps)
@@ -167,6 +179,14 @@ class Telemetry:
         if now >= self._next_temp_poll:
             self._next_temp_poll = now + 1.0
             self.poll_temp()
+        if self.logfile is not None and now >= self._next_log_tick:
+            self._next_log_tick = now + 1.0
+            if position is None:
+                position = self.servo.read_position()
+            self.logfile.write(f"{datetime.now():%Y-%m-%d %H:%M:%S},{self.cycle},{self.phase},"
+                                f"{fmt(position, '.2f')},{fmt(amps, '.3f')},"
+                                f"{fmt(self.motor_temp, 'd')},{fmt(self.pcb_temp, 'd')}\n")
+            self.logfile.flush()
         return amps
 
     def poll_temp(self):
@@ -205,7 +225,7 @@ def move_to(servo: VolzServo, telem: Telemetry, start: float, target: float,
         if done:
             setpoint = target
         actual = servo.set_position(setpoint)
-        amps = telem.sample()
+        amps = telem.sample(actual)
         if actual is not None:
             print(f"\r  cmd {setpoint:+7.2f} deg   actual {actual:+7.2f} deg   "
                   f"{telem.status_str(amps)}   ", end="", flush=True)
@@ -291,11 +311,10 @@ def main():
         logname = start_time.strftime("VolzTest_%Y-%m-%d_%H-%M-%S.csv")
         logfile = open(logname, "w", encoding="utf-8", newline="")
         logfile.write(f"# Volz servo test started {start_time:%Y-%m-%d %H:%M:%S}\n")
-        logfile.write(f"# Port {port}, servo ID {args.servo_id}, baud {args.baud}\n")
+        logfile.write(f"# Port {port}, servo ID {args.servo_id}, baud {args.baud}, 1 Hz sampling\n")
         logfile.write(f"# Commanded positions {args.pos_a:+.2f} / {args.pos_b:+.2f} deg, "
                       f"speed {args.speed:g} deg/s, dwell {args.dwell_s:g} s\n")
-        logfile.write("cycle,time,start_pos_deg,end_pos_deg,cmd_pos_a_deg,cmd_pos_b_deg,"
-                      "motor_temp_C,pcb_temp_C,avg_current_A,peak_current_A\n")
+        logfile.write("time,cycle,phase,position_deg,current_A,motor_temp_C,pcb_temp_C\n")
         logfile.flush()
         print(f"Logging to {logname}")
 
@@ -303,23 +322,28 @@ def main():
     print(f"Cycling {args.pos_a:+.1f} <-> {args.pos_b:+.1f} deg at {args.speed:g} deg/s"
           f" ({'forever' if args.cycles == 0 else f'{args.cycles} cycles'}){period_note} - Ctrl+C to stop")
 
-    telem = Telemetry(servo)
+    telem = Telemetry(servo, logfile=logfile)
     try:
         # Ramp from wherever the servo actually is to the start position.
+        telem.cycle, telem.phase = 0, "start"
         current = move_to(servo, telem, position, args.pos_a, args.speed)
         cycle = 0
         while args.cycles == 0 or cycle < args.cycles:
             cycle += 1
-            cycle_start = datetime.now()
+            telem.cycle = cycle
             cycle_start_perf = time.perf_counter()
             start_pos = servo.read_position()
             telem.reset_samples()
 
+            telem.phase = "dwell_a"
             dwell(servo, telem, args.dwell_s)
             print(f"Cycle {cycle}: -> {args.pos_b:+.1f} deg")
+            telem.phase = "to_b"
             current = move_to(servo, telem, current, args.pos_b, args.speed)
+            telem.phase = "dwell_b"
             dwell(servo, telem, args.dwell_s)
             print(f"Cycle {cycle}: -> {args.pos_a:+.1f} deg")
+            telem.phase = "to_a"
             current = move_to(servo, telem, current, args.pos_a, args.speed)
 
             end_pos = servo.read_position()
@@ -330,15 +354,9 @@ def main():
                        f"peak {fmt(telem.peak_current, '.2f')} A, "
                        f"motor {telem.motor_temp} C, PCB {telem.pcb_temp} C")
             print(summary)
-            if logfile:
-                logfile.write(f"{cycle},{cycle_start:%Y-%m-%d %H:%M:%S},"
-                              f"{fmt(start_pos, '.2f')},{fmt(end_pos, '.2f')},"
-                              f"{args.pos_a:.2f},{args.pos_b:.2f},"
-                              f"{fmt(telem.motor_temp, 'd')},{fmt(telem.pcb_temp, 'd')},"
-                              f"{fmt(telem.avg_current, '.3f')},{fmt(telem.peak_current, '.3f')}\n")
-                logfile.flush()
 
             if args.period > 0:
+                telem.phase = "idle"
                 remaining = args.period - (time.perf_counter() - cycle_start_perf)
                 if remaining > 0:
                     print(f"Idle {remaining:.1f}s until next cycle (period {args.period:g}s)")
