@@ -37,6 +37,10 @@ python3 volz_servo.py                          # cycle +42.4 <-> -45 deg at 30 d
 python3 volz_servo.py --speed 10 --cycles 3    # 10 deg/s, 3 round trips
 python3 volz_servo.py --dwell 2                # pause 2 s at each end
 python3 volz_servo.py --period 30              # one full cycle every 30 s
+python3 volz_servo.py --dwell-min 1 --dwell-max 10 --dwell-ramp-cycles 20
+                                                # dwell ramps 1 -> 10 s over 20 cycles, then holds at 10 s
+python3 volz_servo.py --period-min 5 --period-max 60 --period-ramp-cycles 30
+                                                # period ramps 5 -> 60 s over 30 cycles, then holds at 60 s
 python3 volz_servo.py -l                       # also log 1 Hz telemetry to VolzTest_<date>_<time>.csv
 python3 volz_servo.py --check                  # comms check only, no motion
 python3 volz_servo.py --port /dev/ttyUSB0 --id 2   # explicit port / servo ID (COM5 on Windows)

@@ -23,6 +23,12 @@ Usage:
     python volz_servo.py --check         # comms check only, no motion
     python volz_servo.py --port COM5     # explicit COM port
 
+    # Progressively ramp a delay from a min to a max over N cycles, then hold
+    # at max. Dwell (pause at each end) and period (time between cycle
+    # starts) each ramp independently; give both -min/-max to enable one.
+    python volz_servo.py --dwell-min 1 --dwell-max 10 --dwell-ramp-cycles 20
+    python volz_servo.py --period-min 5 --period-max 60 --period-ramp-cycles 30
+
 Stop any time with Ctrl+C. Close the Volz VISIO app first - it holds the
 COM port open.
 """
@@ -250,16 +256,37 @@ def fmt(value, spec: str) -> str:
     return format(value, spec) if value is not None else ""
 
 
+def ramp_value(cycle: int, vmin: float, vmax: float, ramp_cycles: int) -> float:
+    """Linear ramp from vmin (cycle 1) to vmax (cycle `ramp_cycles`), holding at vmax after."""
+    if ramp_cycles <= 1:
+        return vmax
+    t = min(1.0, (cycle - 1) / (ramp_cycles - 1))
+    return vmin + (vmax - vmin) * t
+
+
 def main():
     ap = argparse.ArgumentParser(description="Cycle a Volz DA-15N between two positions.")
     ap.add_argument("--pos-a", type=float, default=42.4, help="first position, deg (default 42.4)")
     ap.add_argument("--pos-b", type=float, default=-45.0, help="second position, deg (default -45)")
     ap.add_argument("--speed", type=float, default=30.0, help="move speed, deg/s (default 30)")
     ap.add_argument("--dwell", type=float, default=1.0, dest="dwell_s",
-                    help="pause at each end, s (default 1)")
+                    help="pause at each end, s (default 1); ignored if --dwell-min/--dwell-max are given")
+    ap.add_argument("--dwell-min", type=float, default=None,
+                    help="starting dwell time, s, for a progressive ramp (requires --dwell-max)")
+    ap.add_argument("--dwell-max", type=float, default=None,
+                    help="ending dwell time, s, for a progressive ramp (requires --dwell-min)")
+    ap.add_argument("--dwell-ramp-cycles", type=int, default=20,
+                    help="cycles to ramp dwell from min to max, then hold at max (default 20)")
     ap.add_argument("--cycles", type=int, default=0, help="round trips to run, 0 = forever (default 0)")
     ap.add_argument("--period", type=float, default=0.0,
-                    help="seconds between the start of each cycle, 0 = back-to-back (default 0)")
+                    help="seconds between the start of each cycle, 0 = back-to-back (default 0); "
+                         "ignored if --period-min/--period-max are given")
+    ap.add_argument("--period-min", type=float, default=None,
+                    help="starting period, s, for a progressive ramp (requires --period-max)")
+    ap.add_argument("--period-max", type=float, default=None,
+                    help="ending period, s, for a progressive ramp (requires --period-min)")
+    ap.add_argument("--period-ramp-cycles", type=int, default=20,
+                    help="cycles to ramp period from min to max, then hold at max (default 20)")
     ap.add_argument("--port", default=None, help="COM port (default: auto-detect)")
     ap.add_argument("--baud", type=int, default=115200, help="baud rate (default 115200)")
     ap.add_argument("--id", type=int, default=1, dest="servo_id", help="servo ID (default 1)")
@@ -267,6 +294,13 @@ def main():
                     help="write per-cycle log to VolzTest_<date>_<time>.csv")
     ap.add_argument("--check", action="store_true", help="comms check only, no motion")
     args = ap.parse_args()
+
+    if (args.dwell_min is None) != (args.dwell_max is None):
+        ap.error("--dwell-min and --dwell-max must be given together")
+    if (args.period_min is None) != (args.period_max is None):
+        ap.error("--period-min and --period-max must be given together")
+    dwell_ramp = args.dwell_min is not None
+    period_ramp = args.period_min is not None
 
     port = args.port or find_port()
     if port is None:
@@ -312,14 +346,23 @@ def main():
         logfile = open(logname, "w", encoding="utf-8", newline="")
         logfile.write(f"# Volz servo test started {start_time:%Y-%m-%d %H:%M:%S}\n")
         logfile.write(f"# Port {port}, servo ID {args.servo_id}, baud {args.baud}, 1 Hz sampling\n")
+        dwell_desc = (f"dwell ramp {args.dwell_min:g}->{args.dwell_max:g} s over "
+                      f"{args.dwell_ramp_cycles} cycles" if dwell_ramp else f"dwell {args.dwell_s:g} s")
         logfile.write(f"# Commanded positions {args.pos_a:+.2f} / {args.pos_b:+.2f} deg, "
-                      f"speed {args.speed:g} deg/s, dwell {args.dwell_s:g} s\n")
+                      f"speed {args.speed:g} deg/s, {dwell_desc}\n")
         logfile.write("time,cycle,phase,position_deg,current_A,motor_temp_C,pcb_temp_C\n")
         logfile.flush()
         print(f"Logging to {logname}")
 
-    period_note = f", one cycle every {args.period:g}s" if args.period > 0 else ""
-    print(f"Cycling {args.pos_a:+.1f} <-> {args.pos_b:+.1f} deg at {args.speed:g} deg/s"
+    if period_ramp:
+        period_note = f", period ramp {args.period_min:g}->{args.period_max:g}s over {args.period_ramp_cycles} cycles"
+    elif args.period > 0:
+        period_note = f", one cycle every {args.period:g}s"
+    else:
+        period_note = ""
+    dwell_note = (f"dwell ramp {args.dwell_min:g}->{args.dwell_max:g}s over {args.dwell_ramp_cycles} cycles"
+                  if dwell_ramp else f"dwell {args.dwell_s:g}s")
+    print(f"Cycling {args.pos_a:+.1f} <-> {args.pos_b:+.1f} deg at {args.speed:g} deg/s, {dwell_note}"
           f" ({'forever' if args.cycles == 0 else f'{args.cycles} cycles'}){period_note} - Ctrl+C to stop")
 
     telem = Telemetry(servo, logfile=logfile)
@@ -335,13 +378,16 @@ def main():
             start_pos = servo.read_position()
             telem.reset_samples()
 
+            dwell_s = (ramp_value(cycle, args.dwell_min, args.dwell_max, args.dwell_ramp_cycles)
+                       if dwell_ramp else args.dwell_s)
+
             telem.phase = "dwell_a"
-            dwell(servo, telem, args.dwell_s)
-            print(f"Cycle {cycle}: -> {args.pos_b:+.1f} deg")
+            dwell(servo, telem, dwell_s)
+            print(f"Cycle {cycle}: -> {args.pos_b:+.1f} deg" + (f" (dwell {dwell_s:.2f}s)" if dwell_ramp else ""))
             telem.phase = "to_b"
             current = move_to(servo, telem, current, args.pos_b, args.speed)
             telem.phase = "dwell_b"
-            dwell(servo, telem, args.dwell_s)
+            dwell(servo, telem, dwell_s)
             print(f"Cycle {cycle}: -> {args.pos_a:+.1f} deg")
             telem.phase = "to_a"
             current = move_to(servo, telem, current, args.pos_a, args.speed)
@@ -355,14 +401,16 @@ def main():
                        f"motor {telem.motor_temp} C, PCB {telem.pcb_temp} C")
             print(summary)
 
-            if args.period > 0:
+            period = (ramp_value(cycle, args.period_min, args.period_max, args.period_ramp_cycles)
+                      if period_ramp else args.period)
+            if period > 0:
                 telem.phase = "idle"
-                remaining = args.period - (time.perf_counter() - cycle_start_perf)
+                remaining = period - (time.perf_counter() - cycle_start_perf)
                 if remaining > 0:
-                    print(f"Idle {remaining:.1f}s until next cycle (period {args.period:g}s)")
+                    print(f"Idle {remaining:.1f}s until next cycle (period {period:.2f}s)")
                     dwell(servo, telem, remaining)
                 else:
-                    print(f"Warning: cycle took longer than the {args.period:g}s period "
+                    print(f"Warning: cycle took longer than the {period:.2f}s period "
                           f"({time.perf_counter() - cycle_start_perf:.1f}s)")
         print("Done.")
     except KeyboardInterrupt:
