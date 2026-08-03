@@ -6,21 +6,39 @@ between two preset positions at a set speed, over a USB-to-RS-485 adapter
 
 ## Requirements
 
-- Python 3.10+ with `pyserial` (`pip install pyserial`)
+- Python 3.10+ with `pyserial` (`pip install -r requirements.txt`)
 - USB-RS485 adapter connected to the servo bus
-- Close the Volz VISIO app first - it holds the COM port open
+- Close the Volz VISIO app first (Windows) - it holds the COM port open
+
+### Linux setup
+
+Port auto-detection works the same as on Windows - `volz_servo.py` scans
+connected serial devices for an FTDI/RS-485 adapter and picks it automatically
+(e.g. `/dev/ttyUSB0`), no `--port` needed in the common case.
+
+One extra one-time step: your user needs access to the serial device, which
+on most distros means membership in the `dialout` group:
+
+```
+sudo usermod -aG dialout $USER
+```
+
+Log out and back in (or reboot) for the group change to take effect. Without
+this, opening the port fails with a permission error.
 
 ## Usage
 
-Double-click `RunServoCycle.bat`, or from a terminal:
+On Windows, double-click `RunServoCycle.bat`. On Linux, run
+`./run_servo_cycle.sh` (or `python3 volz_servo.py ...` directly). From a
+terminal on either platform:
 
 ```
-python volz_servo.py                          # cycle +42.4 <-> -45 deg at 30 deg/s forever
-python volz_servo.py --speed 10 --cycles 3    # 10 deg/s, 3 round trips
-python volz_servo.py --dwell 2                # pause 2 s at each end
-python volz_servo.py -l                       # also log per-cycle stats to VolzTest_<date>_<time>.csv
-python volz_servo.py --check                  # comms check only, no motion
-python volz_servo.py --port COM5 --id 2       # explicit port / servo ID
+python3 volz_servo.py                          # cycle +42.4 <-> -45 deg at 30 deg/s forever
+python3 volz_servo.py --speed 10 --cycles 3    # 10 deg/s, 3 round trips
+python3 volz_servo.py --dwell 2                # pause 2 s at each end
+python3 volz_servo.py -l                       # also log per-cycle stats to VolzTest_<date>_<time>.csv
+python3 volz_servo.py --check                  # comms check only, no motion
+python3 volz_servo.py --port /dev/ttyUSB0 --id 2   # explicit port / servo ID (COM5 on Windows)
 ```
 
 Stop any time with Ctrl+C.
