@@ -238,6 +238,8 @@ def main():
     ap.add_argument("--dwell", type=float, default=1.0, dest="dwell_s",
                     help="pause at each end, s (default 1)")
     ap.add_argument("--cycles", type=int, default=0, help="round trips to run, 0 = forever (default 0)")
+    ap.add_argument("--period", type=float, default=0.0,
+                    help="seconds between the start of each cycle, 0 = back-to-back (default 0)")
     ap.add_argument("--port", default=None, help="COM port (default: auto-detect)")
     ap.add_argument("--baud", type=int, default=115200, help="baud rate (default 115200)")
     ap.add_argument("--id", type=int, default=1, dest="servo_id", help="servo ID (default 1)")
@@ -297,8 +299,9 @@ def main():
         logfile.flush()
         print(f"Logging to {logname}")
 
+    period_note = f", one cycle every {args.period:g}s" if args.period > 0 else ""
     print(f"Cycling {args.pos_a:+.1f} <-> {args.pos_b:+.1f} deg at {args.speed:g} deg/s"
-          f" ({'forever' if args.cycles == 0 else f'{args.cycles} cycles'}) - Ctrl+C to stop")
+          f" ({'forever' if args.cycles == 0 else f'{args.cycles} cycles'}){period_note} - Ctrl+C to stop")
 
     telem = Telemetry(servo)
     try:
@@ -308,6 +311,7 @@ def main():
         while args.cycles == 0 or cycle < args.cycles:
             cycle += 1
             cycle_start = datetime.now()
+            cycle_start_perf = time.perf_counter()
             start_pos = servo.read_position()
             telem.reset_samples()
 
@@ -333,6 +337,15 @@ def main():
                               f"{fmt(telem.motor_temp, 'd')},{fmt(telem.pcb_temp, 'd')},"
                               f"{fmt(telem.avg_current, '.3f')},{fmt(telem.peak_current, '.3f')}\n")
                 logfile.flush()
+
+            if args.period > 0:
+                remaining = args.period - (time.perf_counter() - cycle_start_perf)
+                if remaining > 0:
+                    print(f"Idle {remaining:.1f}s until next cycle (period {args.period:g}s)")
+                    dwell(servo, telem, remaining)
+                else:
+                    print(f"Warning: cycle took longer than the {args.period:g}s period "
+                          f"({time.perf_counter() - cycle_start_perf:.1f}s)")
         print("Done.")
     except KeyboardInterrupt:
         print("\nStopped by user.")

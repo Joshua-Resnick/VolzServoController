@@ -36,6 +36,7 @@ terminal on either platform:
 python3 volz_servo.py                          # cycle +42.4 <-> -45 deg at 30 deg/s forever
 python3 volz_servo.py --speed 10 --cycles 3    # 10 deg/s, 3 round trips
 python3 volz_servo.py --dwell 2                # pause 2 s at each end
+python3 volz_servo.py --period 30              # one full cycle every 30 s
 python3 volz_servo.py -l                       # also log per-cycle stats to VolzTest_<date>_<time>.csv
 python3 volz_servo.py --check                  # comms check only, no motion
 python3 volz_servo.py --port /dev/ttyUSB0 --id 2   # explicit port / servo ID (COM5 on Windows)
