@@ -60,6 +60,7 @@ COUNTS_PER_DEG = 19.2
 
 UPDATE_HZ = 50.0      # position streaming rate for the speed ramp
 DWELL_SAMPLE_S = 0.1  # current sampling interval while dwelling at an endpoint
+LOG_INTERVAL_S = 0.1  # position/current/temperature log sampling interval
 
 
 def crc16(data: bytes) -> int:
@@ -157,7 +158,8 @@ def find_port() -> str | None:
 class Telemetry:
     """Collects current samples, caches a slow-polled temperature, and
 
-    optionally writes a 1 Hz position/current/temperature log regardless of
+    optionally writes a log (every LOG_INTERVAL_S seconds) of position/
+    current/temperature regardless of
     whether the servo is being actively moved. Each logged row is tagged with
     the caller-set `cycle`/`phase` so cycle-level stats can be recovered by
     grouping the raw rows afterward.
@@ -177,7 +179,7 @@ class Telemetry:
 
     def sample(self, position: float | None = None):
         """Take one current reading. `position`, if known to the caller (e.g.
-        mid-move), is reused for the 1 Hz log instead of an extra read."""
+        mid-move), is reused for the log instead of an extra read."""
         amps = self.servo.read_current()
         if amps is not None:
             self.samples.append(amps)
@@ -186,7 +188,7 @@ class Telemetry:
             self._next_temp_poll = now + 1.0
             self.poll_temp()
         if self.logfile is not None and now >= self._next_log_tick:
-            self._next_log_tick = now + 1.0
+            self._next_log_tick = now + LOG_INTERVAL_S
             if position is None:
                 position = self.servo.read_position()
             self.logfile.write(f"{datetime.now():%Y-%m-%d %H:%M:%S},{self.cycle},{self.phase},"
@@ -345,7 +347,8 @@ def main():
         logname = start_time.strftime("VolzTest_%Y-%m-%d_%H-%M-%S.csv")
         logfile = open(logname, "w", encoding="utf-8", newline="")
         logfile.write(f"# Volz servo test started {start_time:%Y-%m-%d %H:%M:%S}\n")
-        logfile.write(f"# Port {port}, servo ID {args.servo_id}, baud {args.baud}, 1 Hz sampling\n")
+        logfile.write(f"# Port {port}, servo ID {args.servo_id}, baud {args.baud}, "
+                      f"sampling every {LOG_INTERVAL_S:g}s\n")
         dwell_desc = (f"dwell ramp {args.dwell_min:g}->{args.dwell_max:g} s over "
                       f"{args.dwell_ramp_cycles} cycles" if dwell_ramp else f"dwell {args.dwell_s:g} s")
         logfile.write(f"# Commanded positions {args.pos_a:+.2f} / {args.pos_b:+.2f} deg, "
