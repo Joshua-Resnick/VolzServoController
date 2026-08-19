@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 VolzTest_*.csv
+.vibedata/
+chats/
+plots/
